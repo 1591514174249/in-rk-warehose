@@ -22,23 +22,17 @@ NMS_THRESH = 0.45
 
 IMG_SIZE = (640, 640)  # (width, height), such as (1280, 736)
 
-CLASSES = ("person", "bicycle", "car","motorbike ","aeroplane ","bus ","train","truck ","boat","traffic light",
-           "fire hydrant","stop sign ","parking meter","bench","bird","cat","dog ","horse ","sheep","cow","elephant",
-           "bear","zebra ","giraffe","backpack","umbrella","handbag","tie","suitcase","frisbee","skis","snowboard","sports ball","kite",
-           "baseball bat","baseball glove","skateboard","surfboard","tennis racket","bottle","wine glass","cup","fork","knife ",
-           "spoon","bowl","banana","apple","sandwich","orange","broccoli","carrot","hot dog","pizza ","donut","cake","chair","sofa",
-           "pottedplant","bed","diningtable","toilet ","tvmonitor","laptop	","mouse	","remote ","keyboard ","cell phone","microwave ",
-           "oven ","toaster","sink","refrigerator ","book","clock","vase","scissors ","teddy bear ","hair drier", "toothbrush ")
+CLASSES = ("小客车","大客车","厢式货车","有斗货车","应急救援车","渣土车","红外下小客车","红外下大客车","红外下有斗货车","红外下厢式货车","行人","自行车","摩托车","烟雾","野火","危险化学品运输车辆","路政车辆","养护车辆","警车","单层车牌","双层车牌")
 
-coco_id_list = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 27, 28, 31, 32, 33, 34,
-         35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63,
-         64, 65, 67, 70, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 84, 85, 86, 87, 88, 89, 90]
+coco_id_list = [21]
 
 
 def filter_boxes(boxes, box_confidences, box_class_probs):
     """Filter boxes with object threshold.
     """
     box_confidences = box_confidences.reshape(-1)
+    candidate, class_num = box_class_probs.shape
+
     class_max_score = np.max(box_class_probs, axis=-1)
     classes = np.argmax(box_class_probs, axis=-1)
 
@@ -83,8 +77,21 @@ def nms_boxes(boxes, scores):
     keep = np.array(keep)
     return keep
 
+def dfl(position):
+    # Distribution Focal Loss (DFL)
+    import torch
+    x = torch.tensor(position)
+    n,c,h,w = x.shape
+    p_num = 4
+    mc = c//p_num
+    y = x.reshape(n,p_num,mc,h,w)
+    y = y.softmax(2)
+    acc_metrix = torch.tensor(range(mc)).float().reshape(1,1,mc,1,1)
+    y = (y*acc_metrix).sum(2)
+    return y.numpy()
 
-def box_process(position, anchors):
+
+def box_process(position):
     grid_h, grid_w = position.shape[2:4]
     col, row = np.meshgrid(np.arange(0, grid_w), np.arange(0, grid_h))
     col = col.reshape(1, 1, grid_h, grid_w)
@@ -92,35 +99,22 @@ def box_process(position, anchors):
     grid = np.concatenate((col, row), axis=1)
     stride = np.array([IMG_SIZE[1]//grid_h, IMG_SIZE[0]//grid_w]).reshape(1,2,1,1)
 
-    col = col.repeat(len(anchors), axis=0)
-    row = row.repeat(len(anchors), axis=0)
-    anchors = np.array(anchors)
-    anchors = anchors.reshape(*anchors.shape, 1, 1)
-
-    box_xy = position[:,:2,:,:]*2 - 0.5
-    box_wh = pow(position[:,2:4,:,:]*2, 2) * anchors
-
-    box_xy += grid
-    box_xy *= stride
-    box = np.concatenate((box_xy, box_wh), axis=1)
-
-    # Convert [c_x, c_y, w, h] to [x1, y1, x2, y2]
-    xyxy = np.copy(box)
-    xyxy[:, 0, :, :] = box[:, 0, :, :] - box[:, 2, :, :]/ 2  # top left x
-    xyxy[:, 1, :, :] = box[:, 1, :, :] - box[:, 3, :, :]/ 2  # top left y
-    xyxy[:, 2, :, :] = box[:, 0, :, :] + box[:, 2, :, :]/ 2  # bottom right x
-    xyxy[:, 3, :, :] = box[:, 1, :, :] + box[:, 3, :, :]/ 2  # bottom right y
+    position = dfl(position)
+    box_xy  = grid +0.5 -position[:,0:2,:,:]
+    box_xy2 = grid +0.5 +position[:,2:4,:,:]
+    xyxy = np.concatenate((box_xy*stride, box_xy2*stride), axis=1)
 
     return xyxy
 
-def post_process(input_data, anchors):
+def post_process(input_data):
     boxes, scores, classes_conf = [], [], []
-    # 1*255*h*w -> 3*85*h*w
-    input_data = [_in.reshape([len(anchors[0]),-1]+list(_in.shape[-2:])) for _in in input_data]
-    for i in range(len(input_data)):
-        boxes.append(box_process(input_data[i][:,:4,:,:], anchors[i]))
-        scores.append(input_data[i][:,4:5,:,:])
-        classes_conf.append(input_data[i][:,5:,:,:])
+    defualt_branch=3
+    pair_per_branch = len(input_data)//defualt_branch
+    # Python 忽略 score_sum 输出
+    for i in range(defualt_branch):
+        boxes.append(box_process(input_data[pair_per_branch*i]))
+        classes_conf.append(input_data[pair_per_branch*i+1])
+        scores.append(np.ones_like(input_data[pair_per_branch*i+1][:,:1,:,:], dtype=np.float32))
 
     def sp_flatten(_in):
         ch = _in.shape[1]
@@ -140,7 +134,6 @@ def post_process(input_data, anchors):
 
     # nms
     nboxes, nclasses, nscores = [], [], []
-
     for c in set(classes):
         inds = np.where(classes == c)
         b = boxes[inds]
@@ -212,16 +205,9 @@ if __name__ == '__main__':
     # coco val folder: '../../../datasets/COCO//val2017'
     parser.add_argument('--img_folder', type=str, default='../model', help='img folder path')
     parser.add_argument('--coco_map_test', action='store_true', help='enable coco map test')
-    parser.add_argument('--anchors', type=str, default='../model/anchors_yolov5.txt', help='target to anchor file, only yolov5, yolov7 need this param')
 
     args = parser.parse_args()
 
-    # load anchor
-    with open(args.anchors, 'r') as f:
-        values = [float(_v) for _v in f.readlines()]
-        anchors = np.array(values).reshape(3,-1,2).tolist()
-    print("use anchors from '{}', which is {}".format(args.anchors, anchors))
-    
     # init model
     model, platform = setup_model(args)
 
@@ -246,6 +232,12 @@ if __name__ == '__main__':
         if img_src is None:
             continue
 
+        '''
+        # using for test input dumped by C.demo
+        img_src = np.fromfile('./input_b/demo_c_input_hwc_rgb.txt', dtype=np.uint8).reshape(640,640,3)
+        img_src = cv2.cvtColor(img_src, cv2.COLOR_RGB2BGR)
+        '''
+
         # Due to rga init with (0,0,0), we using pad_color (0,0,0) instead of (114, 114, 114)
         pad_color = (0,0,0)
         img = co_helper.letter_box(im= img_src.copy(), new_shape=(IMG_SIZE[1], IMG_SIZE[0]), pad_color=(0,0,0))
@@ -260,7 +252,7 @@ if __name__ == '__main__':
             input_data = img
 
         outputs = model.run([input_data])
-        boxes, classes, scores = post_process(outputs, anchors)
+        boxes, classes, scores = post_process(outputs)
 
         if args.img_show or args.img_save:
             print('\n\nIMG: {}'.format(img_name))
@@ -274,7 +266,7 @@ if __name__ == '__main__':
                 result_path = os.path.join('./result', img_name)
                 cv2.imwrite(result_path, img_p)
                 print('Detection result save to {}'.format(result_path))
-            
+                        
             if args.img_show:
                 cv2.imshow("full post process result", img_p)
                 cv2.waitKeyEx(0)

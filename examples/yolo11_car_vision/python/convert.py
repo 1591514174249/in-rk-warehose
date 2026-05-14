@@ -1,22 +1,24 @@
 import sys
 import os
-
 from rknn.api import RKNN
 
-BASE_DIR = '/home/linf1998/ultralytics-main/ultralytics/datasets/copper_dataset'
-WEIGHTS_DIR = os.path.join(BASE_DIR, 'runs/detect/train6/weights')
+BASE_DIR = '/home/linf1998/myconvertdemo'
+RKNN_DIR = '/home/linf1998/myconvertdemo/yolo11_car_vision'
 
 DATASET_PATH = os.path.join(BASE_DIR, 'dataset.txt')
 
-DEFAULT_RKNN_PATH = os.path.join(WEIGHTS_DIR, 'yolov5.rknn')
+DEFAULT_RKNN_PATH = os.path.join(RKNN_DIR, 'yolo11.rknn')
+
+#DATASET_PATH = '../../../datasets/COCO/coco_subset_20.txt'
+#DEFAULT_RKNN_PATH = '../model/yolo11.rknn'
 
 DEFAULT_QUANT = True
 
 def parse_arg():
     if len(sys.argv) < 3:
         print("Usage: python3 {} onnx_model_path [platform] [dtype(optional)] [output_rknn_path(optional)]".format(sys.argv[0]))
-        print("       platform choose from [rk3562, rk3566, rk3568, rk3576, rk3588, rv1103, rv1106, rv1126b, rv1109, rv1126, rk1808]")
-        print("       dtype choose from [i8, fp] for [rk3562, rk3566, rk3568, rk3576, rk3588, rv1103, rv1106, rv1126b]")
+        print("       platform choose from [rk3562, rk3566, rk3568, rk3576, rk3588, rv1126b, rv1109, rv1126, rk1808]")
+        print("       dtype choose from [i8, fp] for [rk3562, rk3566, rk3568, rk3576, rk3588, rv1126b]")
         print("       dtype choose from [u8, fp] for [rv1109, rv1126, rk1808]")
         exit(1)
 
@@ -49,13 +51,7 @@ if __name__ == '__main__':
 
     # Pre-process config
     print('--> Config model')
-    rknn.config(
-      mean_values=[[0, 0, 0]],
-      std_values=[[255, 255, 255]],
-      target_platform=platform,
-      quantized_algorithm='normal',
-      quantized_method='channel',
-      optimization_level=2)
+    rknn.config(mean_values=[[0, 0, 0]], std_values=[[255, 255, 255]], target_platform=platform)
     print('done')
 
     # Load model
@@ -68,7 +64,7 @@ if __name__ == '__main__':
 
     # Build model
     print('--> Building model')
-    ret = rknn.build(do_quantization=do_quant, dataset=DATASET_PATH, rknn_batch_size=1)
+    ret = rknn.build(do_quantization=do_quant, dataset=DATASET_PATH)
     if ret != 0:
         print('Build model failed!')
         exit(ret)
